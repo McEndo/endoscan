@@ -10,8 +10,8 @@ EndoScan is intended for systems you own or environments where you have explicit
 - IPv4 and hostname targets
 - Single ports, port ranges, and comma-separated port lists
 - Concurrent scanning using a bounded thread pool
-- Configurable connection timeout
-- Configurable worker count
+- Configurable connection timeout (up to 3,600 seconds)
+- Configurable worker count (up to 256)
 - Port-state classification:
   - `OPEN`
   - `CLOSED`
@@ -25,10 +25,22 @@ EndoScan is intended for systems you own or environments where you have explicit
 
 ## Requirements
 
-- Python 3
+- Python 3.8 or newer
 - No third-party Python packages
 
 EndoScan uses only Python's standard library.
+
+## Installation
+
+Clone the repository and enter its directory:
+
+```bash
+git clone https://github.com/McEndo/endoscan.git
+cd endoscan
+```
+
+No package installation step is required. Run EndoScan directly with a
+supported Python interpreter.
 
 ## Usage
 
@@ -80,10 +92,21 @@ Display the version:
 python endoscan.py --version
 ```
 
+Display all CLI options:
+
+```bash
+python endoscan.py --help
+```
+
+Successful scans, `--help`, and `--version` exit with status `0`. Invalid
+arguments, invalid port specifications, and DNS resolution failures are CLI
+usage errors and exit with status `2`. Individual per-port `ERROR` results do
+not currently change the process exit status.
+
 ## Example Output
 
 ```text
-EndoScan v1.0.0
+EndoScan v1.0.1
 -----------------
 Target  : 127.0.0.1
 Address : 127.0.0.1
@@ -93,23 +116,25 @@ Timeout : 1.0s
 
 PORT       STATE
 -----------------
-7998       TIMEOUT
-7999       TIMEOUT
+7998       CLOSED
+7999       CLOSED
 8000       OPEN
-8001       TIMEOUT
-8002       TIMEOUT
+8001       CLOSED
+8002       CLOSED
 
 SCAN SUMMARY
 -----------------
 Ports scanned : 5
 Open          : 1
-Closed        : 0
-Timeout       : 4
+Closed        : 4
+Timeout       : 0
 Errors        : 0
-Duration      : 1.01s
+Duration      : 0.01s
 ```
 
-In this controlled test, a local HTTP server was intentionally listening on TCP port `8000`.
+This illustrative localhost output assumes an HTTP server is listening on TCP
+port `8000` and the operating system immediately refuses the other connection
+attempts. Firewall policy can produce different results.
 
 ## How It Works
 
@@ -122,7 +147,7 @@ The observed result is classified as:
 | State | Meaning |
 | --- | --- |
 | `OPEN` | The TCP connection succeeded. |
-| `CLOSED` | The connection was explicitly refused. |
+| `CLOSED` | The operating system reported that the connection was refused. |
 | `TIMEOUT` | The connection attempt exceeded the configured timeout without a decisive response. |
 | `ERROR` | Another socket or operating-system networking error occurred. |
 
@@ -136,6 +161,10 @@ EndoScan v1.0 uses Python's `ThreadPoolExecutor` to run multiple TCP connection 
 
 Each individual connection attempt remains synchronous, but multiple port scans can be in progress at the same time.
 
+The scanner keeps at most one pending task per active worker instead of queuing
+the entire port range at once. Results are returned and displayed in ascending
+port order, regardless of the order in which connection attempts finish.
+
 The default worker count is:
 
 ```text
@@ -144,22 +173,20 @@ The default worker count is:
 
 It can be changed with `-w` or `--workers`.
 
-## Benchmark
+Worker values must be between `1` and `256`. If fewer ports than workers are
+requested, EndoScan creates only as many worker threads as there are unique
+ports.
 
-Concurrency was tested in a controlled localhost environment using 41 TCP ports and a one-second connection timeout.
+## Performance Notes
 
-| Workers | Duration |
-| ---: | ---: |
-| 1 | 40.33 s |
-| 5 | 8.07 s |
-| 20 | 2.03 s |
-| 50 | 1.02 s |
+Concurrency reduces the wall-clock impact of independent connection attempts,
+especially when several attempts reach their timeout. Actual duration depends
+on the target, routing, firewall behavior, operating system, timeout, and worker
+count. Unused localhost ports normally fail quickly with `CLOSED`; they should
+not be used as a stand-in for timeout-heavy network behavior.
 
-The same test produced one known-open port and 40 timeouts across the recorded runs.
-
-These results represent this specific local test environment and should not be interpreted as general performance guarantees.
-
-The default remains 20 workers to provide bounded concurrency without choosing a more aggressive worker count solely because it performed faster in this benchmark.
+The default remains 20 workers to provide bounded concurrency without creating
+an unnecessarily large burst of connection attempts.
 
 ## Testing
 
@@ -171,15 +198,19 @@ Run the test suite with:
 python -m unittest test_endoscan.py -v
 ```
 
-Current v1.0 testing:
+Current test suite:
 
 ```text
-Ran 11 tests
+Ran 28 tests
 
 OK
 ```
 
-Manual validation was also performed against controlled localhost services, including an HTTP server intentionally bound to TCP port 8000.
+The tests cover parsing and boundary validation, DNS error translation, socket
+result classification and cleanup, deterministic concurrent results, worker
+limits, version output, timeout validation, and CLI error exit codes. Most
+network outcomes are mocked for determinism; one integration test uses only a
+temporary loopback listener to confirm a real successful TCP connection.
 
 ## Project Structure
 
@@ -207,6 +238,9 @@ It does not currently implement:
 - Mixed port specifications such as `22,80,100-200`
 - Advanced retry or timing strategies
 - Raw packet construction
+- IPv6 targets
+- Scanning every address returned for a multi-address hostname
+- Detailed operating-system error messages for per-port `ERROR` results
 
 EndoScan is a learning and portfolio project, not a replacement for mature network scanners such as Nmap.
 
@@ -227,9 +261,11 @@ Building EndoScan involved working with:
 - CLI argument parsing
 - Input validation
 - Automated testing
-- Performance benchmarking
+- Concurrency and performance tradeoffs
 
-The project progressed from networking fundamentals and a sequential scanner to a bounded concurrent implementation, followed by validation, benchmarking, automated testing, and documentation.
+The project progressed from networking fundamentals and a sequential scanner to
+a bounded concurrent implementation, followed by validation, automated testing,
+and documentation.
 
 ## Responsible Use
 
@@ -237,6 +273,10 @@ Only scan systems that you own or have explicit permission to test.
 
 Unauthorized network scanning may violate organizational policies, service agreements, or applicable laws.
 
+## License
+
+EndoScan is released under the [MIT License](LICENSE).
+
 ## Version
 
-**EndoScan v1.0.0**
+**EndoScan v1.0.1**
